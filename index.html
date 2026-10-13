@@ -42,6 +42,24 @@
       border-radius: 999px; padding: 6px 12px; font-variant-numeric: tabular-nums;
     }
     .veli-badge .veli-num { color: var(--text); margin-left: 4px; }
+    button.veli-badge { cursor: pointer; font-family: inherit; }
+    dialog.sheet {
+      border: 1px solid #334155; border-radius: 20px; background: var(--card); color: var(--text);
+      padding: 20px 16px 16px; width: min(420px, calc(100vw - 32px));
+    }
+    dialog.sheet::backdrop { background: rgba(2, 6, 23, 0.7); }
+    dialog.sheet h2 { color: var(--text); }
+    dialog.sheet label { display: block; font-size: 0.8rem; color: var(--muted); margin-top: 12px; }
+    dialog.sheet input {
+      display: block; width: 100%; margin-top: 6px; border: 1px solid #334155; background: var(--bg);
+      color: var(--text); border-radius: 12px; padding: 12px 14px; font-size: 16px;
+    }
+    dialog.sheet .sheet-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; margin-top: 16px; }
+    dialog.sheet .sheet-step[hidden] { display: none; }
+    button.danger {
+      border: 0; border-radius: 12px; padding: 12px 14px; font-size: 15px; font-weight: 600;
+      background: var(--danger); color: #0f172a; cursor: pointer;
+    }
     h2 { font-size: 0.95rem; margin: 0 0 10px; font-weight: 600; color: var(--muted); }
     .tabs { display: flex; gap: 6px; margin-bottom: 16px; }
     .tabs button {
@@ -173,8 +191,44 @@
 <body>
   <div class="app-header">
     <h1>Todo + Tabata + Prayers</h1>
-    <div class="veli-badge" id="veliBadge" title="Veli points">Veli points<span class="veli-num" id="veliTotal">0</span></div>
+    <button type="button" class="veli-badge" id="veliBadge" title="Veli points" aria-haspopup="dialog">Veli points<span class="veli-num" id="veliTotal">0</span></button>
   </div>
+  <dialog class="sheet" id="veliSheet" aria-labelledby="veliSheetTitle">
+    <div class="sheet-step" id="veliStepInfo">
+      <h2 id="veliSheetTitle">Veli points: <span id="veliSheetTotal">0</span></h2>
+      <p class="status" style="text-align:left">Start fresh to begin logging again as if you just signed in. Your Veli points, archive and salah ledger go back to zero; your todos and prayer settings stay.</p>
+      <div class="sheet-actions">
+        <button type="button" class="ghost" id="veliCloseBtn">Close</button>
+        <button type="button" class="secondary" id="veliResetBtn">Reset &amp; start fresh</button>
+      </div>
+    </div>
+    <div class="sheet-step" id="veliStepConfirm" hidden>
+      <h2>Reset everything?</h2>
+      <p class="status" style="text-align:left">This permanently clears your Veli points, prayer archive and salah ledger (birthday, counters and qada) on this device<span id="veliResetCloudNote"> and in your account</span>. It can’t be undone.</p>
+      <div class="sheet-actions">
+        <button type="button" class="ghost" id="veliCancelResetBtn">Cancel</button>
+        <button type="button" class="danger" id="veliConfirmResetBtn">Yes, reset</button>
+      </div>
+    </div>
+    <form class="sheet-step" id="veliStepOnboard" hidden>
+      <h2>Welcome back</h2>
+      <p class="status" style="text-align:left">A couple of details so the ledger can count from the right day. You can change them later in the Ledger tab.</p>
+      <label>Your birthdate
+        <input id="onboardBday" type="date" required />
+      </label>
+      <label>Year you reached puberty
+        <input id="onboardPubertyYear" type="number" inputmode="numeric" min="1900" max="2100" step="1" placeholder="e.g. 2008" required />
+      </label>
+      <label>Started praying regularly (month–year, optional)
+        <input id="onboardStartedPraying" type="month" />
+      </label>
+      <p class="status" id="onboardHint" style="text-align:left;margin-top:10px"></p>
+      <div class="sheet-actions">
+        <button type="button" class="ghost" id="onboardSkipBtn">Later</button>
+        <button type="submit" class="primary">Start logging</button>
+      </div>
+    </form>
+  </dialog>
   <div class="auth-bar" id="authBar">
     <div class="auth-info">
       <span id="authEmail" class="auth-email" hidden></span>
@@ -1463,6 +1517,7 @@
       if (!row || !row.prayer) return;
       const date = row.date || todayISO();
       const prayer = row.prayer;
+      if (closedBeforeReset(prayer, date)) return;
       const status = row.status || "on-time";
       const completedDay = isoDateFrom(row.completedAt);
 
@@ -1508,6 +1563,7 @@
         if (it.kind !== "prayer" || it.done || !SALAH_SET.has(it.prayer)) continue;
         const date = it.date || today;
         if (now >= salahWindowEnd(it.prayer, date)) {
+          if (closedBeforeReset(it.prayer, date)) continue;
           awardSalahMiss(date, it.prayer);
           // Soft miss still needs an archive row (upgraded to late/on-time on check-off).
           archivePrayer({ prayer: it.prayer, text: it.text, time: it.time, date }, "missed");
@@ -1666,6 +1722,8 @@
       if (!item || !item.prayer) return null;
       const date = item.date || todayISO();
       const st = status || "on-time";
+      // A window that closed before a fresh start is not logged as missed.
+      if (st === "missed" && closedBeforeReset(item.prayer, date)) return null;
       const row = {
         id: Date.now() + "-" + Math.random().toString(36).slice(2, 7),
         prayer: item.prayer,
@@ -1875,6 +1933,118 @@
       try { releaseHabits(); } catch (_) {}
     }
 
+    // ---- Fresh start (Veli points badge) ----
+    // Clears Veli points, archive and ledger so logging starts over as if just
+    // signed in. The reset time is synced: other devices drop their pre-reset
+    // copies instead of merging them back, and windows that closed before it
+    // are never scored.
+    const RESET_KEY = "todo-app-reset-v1";
+    const RESET_CLEARS = [VELI_KEY, ARCHIVE_KEY, LEDGER_KEY];
+    function autoWindowEnd(id, date) {
+      if (SALAH_SET.has(id)) return salahWindowEnd(id, date);
+      const t = loadPrayerSettings().times || {};
+      if (id === "brush-am") return dateAt(date, t.Dhuhr || "12:00", 0);
+      if (id === "brush-pm") return dateAt(date, t.Fajr || "05:00", 1);
+      return null;
+    }
+    function closedBeforeReset(id, date) {
+      const at = localStorage.getItem(RESET_KEY);
+      if (!at) return false;
+      const end = autoWindowEnd(id, date || todayISO());
+      return !!end && end <= new Date(at);
+    }
+    function resetTrackingProgress() {
+      const now = new Date();
+      // Write the reset time first so nothing below is scored as a miss.
+      localStorage.setItem(RESET_KEY, now.toISOString());
+      const prayerDoneKey = "todo-app-prayer-done-v1";
+      const habitDoneKey = "todo-app-habit-done-v1";
+      const prayerDone = parseDoneMapJson(localStorage.getItem(prayerDoneKey));
+      const habitDone = parseDoneMapJson(localStorage.getItem(habitDoneKey));
+      const mark = (map, date, id) => {
+        map[date] = map[date] || [];
+        if (!map[date].includes(id)) map[date].push(id);
+      };
+      // Drop open salah/brush todos whose window already closed; marking them
+      // done keeps them from being re-added (or merged back from the cloud).
+      const items = load().filter(it => {
+        if (it.done) return true;
+        const id = it.kind === "prayer" ? it.prayer : (it.kind === "habit" ? it.habitId : null);
+        if (!id || !it.date) return true;
+        const end = autoWindowEnd(id, it.date);
+        if (!end || now < end) return true;
+        mark(it.kind === "prayer" ? prayerDone : habitDone, it.date, id);
+        return false;
+      });
+      localStorage.setItem(prayerDoneKey, JSON.stringify(prayerDone));
+      localStorage.setItem(habitDoneKey, JSON.stringify(habitDone));
+      save(items);
+      RESET_CLEARS.forEach(k => localStorage.removeItem(k));
+      render();
+      syncLedgerUI();
+      renderArchive();
+      renderVeliPoints();
+    }
+
+    const veliSheet = document.getElementById("veliSheet");
+    function showVeliStep(id) {
+      ["veliStepInfo", "veliStepConfirm", "veliStepOnboard"].forEach(s => {
+        document.getElementById(s).hidden = s !== id;
+      });
+    }
+    function openVeliSheet(step) {
+      document.getElementById("veliSheetTotal").textContent = String(loadVeli().total | 0);
+      // Only mention the account when signed in.
+      document.getElementById("veliResetCloudNote").hidden = document.getElementById("signOutBtn").hidden;
+      showVeliStep(step || "veliStepInfo");
+      if (!veliSheet.open) veliSheet.showModal();
+    }
+    function openOnboarding() {
+      const L = loadLedger();
+      document.getElementById("onboardBday").value = L.bday || "";
+      const pub = parseYMD(L.puberty);
+      document.getElementById("onboardPubertyYear").value = pub ? String(pub.getFullYear()) : "";
+      document.getElementById("onboardStartedPraying").value = L.startedPraying || "";
+      document.getElementById("onboardHint").textContent = "";
+      openVeliSheet("veliStepOnboard");
+    }
+    document.getElementById("veliBadge").onclick = () => openVeliSheet("veliStepInfo");
+    document.getElementById("veliCloseBtn").onclick = () => veliSheet.close();
+    document.getElementById("veliResetBtn").onclick = () => showVeliStep("veliStepConfirm");
+    document.getElementById("veliCancelResetBtn").onclick = () => showVeliStep("veliStepInfo");
+    document.getElementById("veliConfirmResetBtn").onclick = () => {
+      resetTrackingProgress();
+      openOnboarding();
+    };
+    document.getElementById("onboardSkipBtn").onclick = () => veliSheet.close();
+    document.getElementById("veliStepOnboard").onsubmit = (e) => {
+      e.preventDefault();
+      const hint = document.getElementById("onboardHint");
+      const bday = document.getElementById("onboardBday").value;
+      const birth = parseYMD(bday);
+      const year = Number(document.getElementById("onboardPubertyYear").value);
+      const today = todayISO();
+      if (!birth || bday > today) { hint.textContent = "Enter a valid birthdate."; return; }
+      if (!Number.isInteger(year) || year < birth.getFullYear() + 7 || year > new Date().getFullYear()) {
+        hint.textContent = "Enter the year puberty started (at least 7 years after your birth year, not in the future).";
+        return;
+      }
+      // Only the year is known: use the birthday in that year, never later than today.
+      let puberty = year + bday.slice(4);
+      const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+      if (puberty.endsWith("-02-29") && !leap) puberty = year + "-02-28";
+      if (puberty > today) puberty = today;
+      const L = loadLedger();
+      L.bday = bday;
+      L.puberty = puberty;
+      L.pubertyAge = year - birth.getFullYear();
+      L.startedPraying = document.getElementById("onboardStartedPraying").value || "";
+      L.trackingStartedAt = today;
+      saveLedger(L);
+      syncLedgerUI();
+      veliSheet.close();
+    };
+
     // Expose helpers for cloud sync module (refreshAppUI after applyCloudBlob)
     window.render = render;
     window.syncPrayerUI = syncPrayerUI;
@@ -1996,6 +2166,7 @@
         "todo-app-archive-v1",
         "todo-app-veli-points-v1",
         "todo-app-deleted-v1",
+        RESET_KEY,
       ];
       // Which account this device's data belongs to, so it never lands in someone else's.
       const OWNER_KEY = "todo-app-owner-v1";
@@ -2095,8 +2266,21 @@
           let localPsSnap = null;
           try { localOpen = collectOpenAutoIds(load()); } catch (_) {}
           try { localPsSnap = loadPrayerSettings(); } catch (_) { localPsSnap = null; }
+          // Fresh start: the newer reset wins. If another device reset, drop this
+          // device's pre-reset progress and take the cloud's; if this device reset,
+          // ignore the cloud's stale progress.
+          const localReset = localStorage.getItem(RESET_KEY) || "";
+          const cloudReset = typeof data.keys[RESET_KEY] === "string" ? data.keys[RESET_KEY] : "";
+          const adoptCloudReset = cloudReset > localReset;
+          if (adoptCloudReset) {
+            RESET_CLEARS.forEach(k => _removeItem(k));
+            _setItem(RESET_KEY, cloudReset);
+          }
+          const staleCloud = localReset > cloudReset;
           for (const k of SYNC_KEYS) {
             if (!Object.prototype.hasOwnProperty.call(data.keys, k)) continue;
+            if (k === RESET_KEY) continue;
+            if (staleCloud && RESET_CLEARS.includes(k)) continue;
             const val = data.keys[k];
             // Merge done maps: empty cloud must not undo local check-offs; open local
             // todos strip stale cloud-only done flags so undoned salah is not pruned.
@@ -2184,7 +2368,7 @@
             }
             // Single-value keys (settings, ledger): with a known base, keep whichever
             // side changed; if both changed, keep this device's (ledger counters add up).
-            if (base) {
+            if (base && !(adoptCloudReset && RESET_CLEARS.includes(k))) {
               const localVal = localStorage.getItem(k);
               const baseVal = base[k] ?? null;
               const cloudVal = val == null ? null : (typeof val === "string" ? val : JSON.stringify(val));

@@ -548,6 +548,12 @@ console.log("\n=== 6) Archive always on check-off/miss; Veli→archive backfill 
   assertIncludes(indexHtml, 'archivePrayer({\n              prayer: items[i].habitId', "habit check-off calls archivePrayer");
   // Soft miss archives too
   assertIncludes(indexHtml, 'archivePrayer({ prayer: it.prayer, text: it.text, time: it.time, date }, "missed")', "soft miss creates archive");
+
+  // Fresh start from the Veli badge: reset time syncs, pre-reset windows never score
+  assertIncludes(indexHtml, 'document.getElementById("veliBadge").onclick', "veli badge opens reset sheet");
+  assertIncludes(indexHtml, '"todo-app-deleted-v1",\n        RESET_KEY,', "reset time is a synced key");
+  assertIncludes(indexHtml, "if (closedBeforeReset(prayer, date)) return;", "no veli for windows closed before reset");
+  assertIncludes(indexHtml, "if (staleCloud && RESET_CLEARS.includes(k)) continue;", "stale cloud progress ignored after reset");
 }
 
 console.log(`\nSmoke result: ${passed} passed, ${failed} failed`);
