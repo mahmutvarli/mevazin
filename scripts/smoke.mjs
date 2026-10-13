@@ -25,6 +25,10 @@ import {
   shouldAddHabit,
   releaseHabitsPure,
   ledgerSaveCalculate,
+  ledgerRestartTracking,
+  salahWindowEnd,
+  mergeTodoLists,
+  mergeLedger3,
   isDone,
   pruneCompletedAutoTodos,
   duePrayerNames,
@@ -173,8 +177,24 @@ console.log("\n=== 2) Salah auto-inject: due unpaid, check stays done, no wipe =
   );
 
   // completion status
-  assert(completionStatusPure("Dhuhr", "13:00", 13 * 60 + 30, TIMES) === "on-time", "Dhuhr on-time before Asr");
-  assert(completionStatusPure("Dhuhr", "13:00", 17 * 60, TIMES) === "late", "Dhuhr late after Asr");
+  const at = (d, hhmm) => {
+    const [y, m, dd] = d.split("-").map(Number);
+    const [h, mi] = hhmm.split(":").map(Number);
+    return new Date(y, m - 1, dd, h, mi);
+  };
+  const NEXT = (() => { const d = at(DATE, "12:00"); d.setDate(d.getDate() + 1); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); })();
+  const T2 = { ...TIMES, Sunrise: "07:00" };
+  assert(completionStatusPure("Dhuhr", DATE, at(DATE, "13:30"), T2) === "on-time", "Dhuhr on-time before Asr");
+  assert(completionStatusPure("Dhuhr", DATE, at(DATE, "17:00"), T2) === "late", "Dhuhr late after Asr");
+  // Item 2: same clock time on a later day is a make-up, not on time
+  assert(completionStatusPure("Dhuhr", DATE, at(NEXT, "13:30"), T2) === "late", "yesterday's Dhuhr checked today at 13:30 is late");
+  // Item 3: Fajr ends at sunrise, Isha/Witr at next Fajr
+  assert(completionStatusPure("Fajr", DATE, at(DATE, "06:30"), T2) === "on-time", "Fajr before sunrise on time");
+  assert(completionStatusPure("Fajr", DATE, at(DATE, "08:00"), T2) === "late", "Fajr after sunrise late");
+  assert(completionStatusPure("Isha", DATE, at(NEXT, "00:30"), T2) === "on-time", "Isha at 00:30 still on time");
+  assert(completionStatusPure("Witr", DATE, at(NEXT, "00:30"), T2) === "on-time", "Witr at 00:30 on time");
+  assert(completionStatusPure("Isha", DATE, at(NEXT, TIMES.Fajr), T2) === "late", "Isha after next Fajr late");
+  assert(salahWindowEnd("Fajr", DATE, TIMES).getTime() === at(DATE, TIMES.Dhuhr).getTime(), "Fajr falls back to Dhuhr without cached sunrise");
 }
 
 console.log("\n=== 3) Habits brush: am miss at Dhuhr; pm miss after next Fajr; on-time ===");
@@ -267,7 +287,7 @@ console.log("\n=== 4) Archive colors + Ledger + Veli idempotent ===");
   assertIncludes(indexHtml, ".arch-item.late", "archive CSS late");
   assertIncludes(indexHtml, ".arch-item.missed", "archive CSS missed");
   assertIncludes(indexHtml, 'statusColor', "archive status text colored");
-  assertIncludes(indexHtml, "Save & calculate will reset the on-time (green) and made-up (orange)", "ledger confirm copy");
+  assertIncludes(indexHtml, "Restart tracking will reset the on-time (green) and made-up (orange)", "restart confirm copy");
 
   const L = {
     bday: "2000-01-01",
@@ -277,14 +297,27 @@ console.log("\n=== 4) Archive colors + Ledger + Veli idempotent ===");
     qadaPending: { Fajr: 1 },
     trackingStartedAt: "2026-09-01",
   };
-  const denied = ledgerSaveCalculate(L, DATE, false);
-  assert(!denied.applied, "without confirm, calculate must not apply");
+  // Item 5: saving again keeps counters and the tracking start
+  const saved = ledgerSaveCalculate(L, DATE);
+  assert(saved.L.onTime === 40 && saved.L.makeup === 8 && saved.L.qadaRegistered === 3, "save keeps counters");
+  assert(saved.L.trackingStartedAt === "2026-09-01", "save keeps tracking start");
+  assert(ledgerSaveCalculate({ bday: "2000-01-01" }, DATE).L.trackingStartedAt === DATE, "first save starts tracking today");
+  const denied = ledgerRestartTracking(L, DATE, false);
+  assert(!denied.applied, "without confirm, restart must not apply");
   assert(denied.L.onTime === 40 && denied.L.makeup === 8, "counters unchanged when not confirmed");
-  const ok = ledgerSaveCalculate(L, DATE, true);
-  assert(ok.applied, "with confirm, calculate applies");
+  const ok = ledgerRestartTracking(L, DATE, true);
+  assert(ok.applied, "with confirm, restart applies");
   assert(ok.L.onTime === 0 && ok.L.makeup === 0, "counters reset to 0");
   assert(ok.L.qadaRegistered === 0, "qadaRegistered reset");
   assert(ok.L.trackingStartedAt === DATE, "trackingStartedAt set to today");
+
+  // Item 10: merges
+  const a = { text: "A", done: false, id: "a" }, b = { text: "B", done: false, id: "b" }, c = { text: "C", done: false, id: "c" };
+  const merged = mergeTodoLists([a, b], [c, a], {});
+  assert(merged.length === 3 && merged[0].id === "c", "todo added on another device is kept, on top");
+  assert(mergeTodoLists([a], [a, b], { "todo:b": "2026-01-01" }).length === 1, "deleted todo does not come back");
+  const m3 = mergeLedger3({ onTime: 10, makeup: 0 }, { onTime: 14, makeup: 0 }, { onTime: 13, makeup: 2 });
+  assert(m3.onTime === 17 && m3.makeup === 2, "ledger increments from both devices add up");
 
   // Veli idempotent
   let V = { total: 0, awarded: {} };

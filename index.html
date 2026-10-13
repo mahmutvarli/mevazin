@@ -6,6 +6,10 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#0f172a" />
+  <meta name="apple-mobile-web-app-title" content="Todo" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <title>Todo + Tabata + Prayers</title>
   <style>
     :root {
@@ -254,7 +258,7 @@
       </label>
       <div id="prayerList" class="prayer-list"></div>
     </div>
-    <p class="hint">Times from Aladhan API using your GPS. On iPhone, keep the site open or use Add to Home Screen; background alerts are limited by iOS.</p>
+    <p class="hint">Times from Aladhan API using your GPS. On iPhone, athan alerts need the app on your Home Screen (Share → Add to Home Screen), opened from there. Alerts show while the app is open or in the background; they can't arrive once iOS has closed it.</p>
   </section>
 
 
@@ -274,10 +278,11 @@
       <label style="display:block;font-size:0.8rem;color:var(--muted);margin-top:10px">Started praying since (month–year)
         <input id="startedPraying" type="month" style="margin-top:6px" />
       </label>
-      <p class="hint" style="text-align:left;margin-top:6px" id="startedPrayingHint">Optional. Days from accountability until this month = historical red debt. Days from this month until you press Save &amp; calculate = assumed already prayed (credited). Live misses only count after Calculate.</p>
+      <p class="hint" style="text-align:left;margin-top:6px" id="startedPrayingHint">Optional. Days from accountability until this month = historical red debt. Days from this month until your first Save &amp; calculate = assumed already prayed (credited). Live misses count from the day after.</p>
       <p class="hint" style="text-align:left;margin-top:4px" id="accountabilityHint"></p>
       <div class="controls" style="margin-top:14px;justify-content:flex-start">
         <button type="button" class="primary" id="saveLedgerBtn">Save &amp; calculate</button>
+        <button type="button" class="secondary" id="restartTrackingBtn" hidden>Restart tracking</button>
       </div>
       <div id="ledgerStats" style="margin-top:16px;display:none">
         <div class="prayer-row" style="border-left:3px solid var(--prayer);padding-left:8px"><span class="name">Veli points</span><span class="time" id="statVeli" style="color:var(--prayer)">0</span></div>
@@ -336,6 +341,8 @@
     const KEY = "todo-app-v3";
     const PRAYER_KEY = "todo-app-prayer-settings-v1";
     const PRAYER_NAMES = ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"];
+    // Witr is its own checkable item (wajib in the Hanafi school, part of the 20/day ledger).
+    const SALAH_RAKATS = { Fajr: 2, Dhuhr: 4, Asr: 4, Maghrib: 3, Isha: 4, Witr: 3 };
     const listEl = document.getElementById("list");
     const form = document.getElementById("form");
     const input = document.getElementById("input");
@@ -434,6 +441,35 @@
       return next;
     }
 
+    // Deleted todo keys → ISO time, synced so a delete on one device sticks on the others.
+    const DELETED_KEY = "todo-app-deleted-v1";
+    function loadDeleted() { return parseDoneMapJson(localStorage.getItem(DELETED_KEY)); }
+    function recordDeleted(it) {
+      const map = loadDeleted();
+      map[todoFocusKey(it)] = new Date().toISOString();
+      // Keep 60 days of deletions; older ones can no longer come back from a stale device.
+      const cutoff = new Date(Date.now() - 60 * 864e5).toISOString();
+      for (const k of Object.keys(map)) if (map[k] < cutoff) delete map[k];
+      localStorage.setItem(DELETED_KEY, JSON.stringify(map));
+    }
+    /** Union of two todo lists by stable key, minus deleted ones. Local copy wins for the same key. */
+    function mergeTodoLists(localItems, cloudItems, deleted) {
+      const del = deleted || {};
+      const localKeys = new Set((localItems || []).map(todoFocusKey));
+      // Items only the other device has (usually new ones) go on top, like a fresh add.
+      const cloudOnly = (cloudItems || []).filter(it => it && !localKeys.has(todoFocusKey(it)));
+      const out = [];
+      const seen = new Set();
+      for (const it of [...cloudOnly, ...(localItems || [])]) {
+        if (!it) continue;
+        const k = todoFocusKey(it);
+        if (seen.has(k) || del[k]) continue;
+        seen.add(k);
+        out.push(it);
+      }
+      return out;
+    }
+
     function load() {
       try { return JSON.parse(localStorage.getItem(KEY)) || []; }
       catch { return []; }
@@ -493,14 +529,13 @@
           const was = items[i].done;
           items[i].done = !was;
           if (items[i].kind === "prayer") {
-            const FARZ = { Fajr: 2, Dhuhr: 4, Asr: 4, Maghrib: 3, Isha: 4 };
-            const r = FARZ[items[i].prayer] || 0;
+            const r = SALAH_RAKATS[items[i].prayer] || 0;
             const L = loadLedger();
             if (!was && items[i].done) L.onTime = (L.onTime|0) + r;
             if (was && !items[i].done) L.onTime = Math.max(0, (L.onTime|0) - r);
             saveLedger(L);
             if (!was && items[i].done) {
-              const st = completionStatus(items[i].prayer, items[i].time, new Date().toISOString());
+              const st = completionStatus(items[i].prayer, items[i].time, new Date().toISOString(), items[i].date);
               archivePrayer(items[i], st);
               if (st === "late") {
                 const L2 = loadLedger();
@@ -554,6 +589,8 @@
             recordDoneId("todo-app-prayer-done-v1", it.date || todayISO(), it.prayer);
           } else if (it && it.kind === "habit" && it.habitId) {
             recordDoneId("todo-app-habit-done-v1", it.date || todayISO(), it.habitId);
+          } else if (it) {
+            recordDeleted(it);
           }
           items.splice(i, 1); save(items); render();
         };
@@ -607,6 +644,9 @@
     const clockEl = document.getElementById("clock");
     const metaEl = document.getElementById("meta");
     let timer = null, running = false, phase = "ready", remaining = 25 * 60, round = 0, totalRounds = 4;
+    // Phases run off wall-clock deadlines, so the timer stays exact when the
+    // browser throttles intervals or the phone locks.
+    let endAt = 0, catchingUp = false, audioCtx = null;
 
     function minsInput(id, fallback) {
       const n = Number(document.getElementById(id).value);
@@ -619,17 +659,30 @@
       const s = Math.max(0, Math.floor(secs));
       return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
     }
-    function beep(high) {
+    /** One shared AudioContext, unlocked from the Start tap (iPhone blocks sound otherwise). */
+    function ensureAudio() {
       try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.connect(g); g.connect(ctx.destination);
-        o.frequency.value = high ? 880 : 440;
-        g.gain.value = 0.08;
-        o.start();
-        setTimeout(() => { o.stop(); ctx.close(); }, high ? 180 : 120);
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === "suspended") audioCtx.resume();
+      } catch (_) { audioCtx = null; }
+      return audioCtx;
+    }
+    function beep(high, delaySec) {
+      if (catchingUp) return; // no burst of beeps when catching up after the phone was locked
+      try {
+        const ctx = ensureAudio();
+        if (ctx) {
+          const o = ctx.createOscillator();
+          const g = ctx.createGain();
+          o.connect(g); g.connect(ctx.destination);
+          o.frequency.value = high ? 880 : 440;
+          g.gain.value = 0.08;
+          const t = ctx.currentTime + (delaySec || 0);
+          o.start(t);
+          o.stop(t + (high ? 0.18 : 0.12));
+        }
       } catch (_) {}
+      try { if (navigator.vibrate) navigator.vibrate(high ? 200 : 100); } catch (_) {}
     }
     function setPhase(p, secs) {
       phase = p;
@@ -648,21 +701,38 @@
       const t = findTodoByFocusKey(load(), key);
       return t ? ("Focus: " + t.text + " · ") : "";
     }
-    function tick() {
-      remaining -= 1;
-      clockEl.textContent = fmt(remaining);
-      metaEl.textContent = focusLabel() + "Round " + round + " / " + totalRounds;
-      if (remaining > 0) return;
+    /** Start phase p lasting secs, measured from fromTs (the previous phase's deadline). */
+    function startPhase(p, secs, fromTs) {
+      setPhase(p, secs);
+      endAt = fromTs + secs * 1000;
+    }
+    function advancePhase() {
       const work = workSecs(), rest = restSecs();
       totalRounds = Math.max(1, Number(document.getElementById("rounds").value) || 4);
-      if (phase === "prep") { round = 1; beep(true); setPhase("work", work); return; }
+      const from = endAt;
+      if (phase === "prep") { round = 1; beep(true); startPhase("work", work, from); return; }
       if (phase === "work") {
-        if (round >= totalRounds) { beep(true); beep(true); setPhase("done", 0); stopTimer(false); return; }
-        if (rest > 0) { beep(false); setPhase("rest", rest); }
-        else { round += 1; beep(true); setPhase("work", work); }
+        if (round >= totalRounds) { beep(true); beep(true, 0.25); setPhase("done", 0); stopTimer(false); return; }
+        if (rest > 0) { beep(false); startPhase("rest", rest, from); }
+        else { round += 1; beep(true); startPhase("work", work, from); }
         return;
       }
-      if (phase === "rest") { round += 1; beep(true); setPhase("work", work); }
+      if (phase === "rest") { round += 1; beep(true); startPhase("work", work, from); }
+    }
+    function tick() {
+      if (!running) return;
+      const now = Date.now();
+      let guard = 0;
+      while (running && now >= endAt && guard++ < 1000) {
+        // Only the latest transition beeps if several passed while the screen was off.
+        catchingUp = now - endAt > 2000;
+        advancePhase();
+      }
+      catchingUp = false;
+      if (!running) return;
+      remaining = Math.max(0, Math.ceil((endAt - now) / 1000));
+      clockEl.textContent = fmt(remaining);
+      metaEl.textContent = focusLabel() + "Round " + round + " / " + totalRounds;
     }
     function stopTimer(resetClock) {
       running = false;
@@ -673,6 +743,7 @@
     }
     document.getElementById("startBtn").onclick = () => {
       if (running) return;
+      ensureAudio();
       const work = workSecs(), prep = prepSecs();
       totalRounds = Math.max(1, Number(document.getElementById("rounds").value) || 4);
       if (phase === "ready" || phase === "done") {
@@ -680,15 +751,21 @@
         if (prep > 0) setPhase("prep", prep);
         else { round = 1; setPhase("work", work); beep(true); }
       }
+      endAt = Date.now() + remaining * 1000;
       running = true;
       document.getElementById("startBtn").textContent = "Running…";
-      timer = setInterval(tick, 1000);
+      timer = setInterval(tick, 250);
     };
     document.getElementById("pauseBtn").onclick = () => {
       if (!running) return;
+      remaining = Math.max(0, Math.ceil((endAt - Date.now()) / 1000));
       running = false; clearInterval(timer); timer = null;
+      clockEl.textContent = fmt(remaining);
       document.getElementById("startBtn").textContent = "Resume";
     };
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") tick();
+    });
     document.getElementById("resetBtn").onclick = () => stopTimer(true);
 
     // Prayers
@@ -722,11 +799,15 @@
       const next = nextPrayerName(times);
       statusEl.textContent = (s.placeLabel || (s.lat.toFixed(2) + ", " + s.lon.toFixed(2))) +
         " · " + (s.lastDate || todayISO()) + " · method " + s.method;
-      prayerListEl.innerHTML = PRAYER_NAMES.map(name => {
+      const rows = PRAYER_NAMES.map(name => {
         const cls = name === next ? "prayer-row next" : "prayer-row";
         const tag = name === next ? " · next" : "";
         return '<div class="' + cls + '"><span class="name">' + name + tag + '</span><span class="time">' + times[name] + '</span></div>';
-      }).join("");
+      });
+      if (times.Sunrise) {
+        rows.splice(1, 0, '<div class="prayer-row"><span class="name" style="color:var(--muted)">Sunrise · Fajr ends</span><span class="time" style="color:var(--muted)">' + times.Sunrise + '</span></div>');
+      }
+      prayerListEl.innerHTML = rows.join("");
     }
 
     function prayerTodoExists(items, date, name) {
@@ -788,6 +869,7 @@
       const date = todayISO();
       if (s.lastDate !== date) return;
       const due = duePrayerNames(s.times);
+      if (due.includes("Isha")) due.push("Witr");
       let items = load();
       let changed = false;
       // remove completed prayer todos (checked off = gone)
@@ -805,7 +887,7 @@
           done: false,
           kind: "prayer",
           prayer: name,
-          time: s.times[name],
+          time: name === "Witr" ? s.times.Isha : s.times[name],
           date: date
         });
         changed = true;
@@ -840,6 +922,8 @@
         const t = data.data.timings;
         const times = {};
         PRAYER_NAMES.forEach(n => { times[n] = (t[n] || "").split(" ")[0]; });
+        // Sunrise ends the Fajr window.
+        if (t.Sunrise) times.Sunrise = String(t.Sunrise).split(" ")[0];
         const meta = data.data.meta || {};
         const prevTimes = hadCache ? JSON.stringify(s.times) : null;
         const nextTimes = JSON.stringify(times);
@@ -905,12 +989,25 @@
       savePrayerSettings(s);
       if (s.autoTodos && s.times) releaseDuePrayerTodos();
     };
+    const canNotify = "Notification" in window;
     document.getElementById("athanNotify").onchange = async (e) => {
       const s = loadPrayerSettings();
+      if (e.target.checked && !canNotify) {
+        // Safari only has notifications for Home Screen apps; referencing
+        // Notification directly used to throw here.
+        e.target.checked = false;
+        s.notify = false;
+        savePrayerSettings(s);
+        statusEl.textContent = "Alerts aren't available in this browser. On iPhone: Share → Add to Home Screen, open the app from there, then turn this on.";
+        return;
+      }
       s.notify = e.target.checked;
       savePrayerSettings(s);
-      if (s.notify && Notification && Notification.permission === "default") {
+      if (s.notify && Notification.permission === "default") {
         await Notification.requestPermission();
+      }
+      if (s.notify && Notification.permission === "denied") {
+        statusEl.textContent = "Notifications are blocked for this site. Allow them in your browser settings.";
       }
     };
     document.getElementById("prayerMethod").onchange = (e) => {
@@ -920,23 +1017,53 @@
       fetchPrayerTimes();
     };
 
+    /** Service-worker notifications work on Home Screen apps and Android, where new Notification() throws. */
+    async function showAthanNotification(title, body) {
+      try {
+        if ("serviceWorker" in navigator) {
+          const reg = await navigator.serviceWorker.getRegistration();
+          if (reg && reg.showNotification) {
+            await reg.showNotification(title, { body, tag: title, icon: "icons/icon-192.png" });
+            return;
+          }
+        }
+        new Notification(title, { body });
+      } catch (_) {}
+    }
+
+    const ATHAN_NOTIFY_GRACE_MINS = 10;
     function checkAthanNotify() {
       const s = loadPrayerSettings();
       if (!s.notify || !s.times || s.lastDate !== todayISO()) return;
-      if (!window.Notification || Notification.permission !== "granted") return;
+      if (!canNotify || Notification.permission !== "granted") return;
       const now = new Date();
-      const hhmm = String(now.getHours()).padStart(2,"0") + ":" + String(now.getMinutes()).padStart(2,"0");
+      const nowMins = now.getHours() * 60 + now.getMinutes();
       for (const name of PRAYER_NAMES) {
         const key = s.lastDate + "|" + name;
-        if (s.times[name] === hhmm && !notified.has(key)) {
+        const athan = toMins(s.times[name]);
+        // A window instead of the exact minute, so a throttled timer or a
+        // briefly backgrounded app still gets the alert.
+        if (nowMins >= athan && nowMins < athan + ATHAN_NOTIFY_GRACE_MINS && !notified.has(key)) {
           notified.add(key);
           localStorage.setItem("todo-app-athan-notified", JSON.stringify([...notified]));
-          try { new Notification("Athan · " + name, { body: "It's time for " + name + " (" + hhmm + ")" }); } catch (_) {}
+          showAthanNotification("Athan · " + name, "It's time for " + name + " (" + s.times[name] + ")");
           beep(true);
         }
       }
     }
 
+    /** Fetch the new day's times when the app stays open past midnight. */
+    let lastNewDayFetch = 0;
+    function refreshPrayerTimesIfNewDay(minGapMs) {
+      const s = loadPrayerSettings();
+      if (s.lat == null || s.lastDate === todayISO()) return;
+      if (Date.now() - lastNewDayFetch < minGapMs) return;
+      lastNewDayFetch = Date.now();
+      fetchPrayerTimes({ quiet: true });
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") refreshPrayerTimesIfNewDay(15000);
+    });
 
     // Salah ledger (birthday → owed count)
     const LEDGER_KEY = "todo-app-ledger-v1";
@@ -1103,10 +1230,11 @@
       if (!L.startedPraying) {
         hintEl.textContent = "Not set — counting from accountability start (previous behavior). Set month–year so years before you started praying stay red historical debt; days after that until Calculate are assumed covered.";
       } else if (!L.trackingStartedAt) {
-        hintEl.textContent = "Started praying set. Press Save & calculate to credit days from that month through today as already prayed, keep historical debt red, and start live miss tracking from tomorrow.";
+        hintEl.textContent = "Started praying set. Press Save & calculate to credit days from that month through today as already prayed, keep historical debt red, and start live miss tracking from tomorrow. Saving again later keeps your counters.";
       } else {
         hintEl.textContent = "Historical red = accountability → day before started praying. Assumed covered = started praying → " + L.trackingStartedAt + ". Live misses = after that date.";
       }
+      document.getElementById("restartTrackingBtn").hidden = !L.trackingStartedAt;
       const c = ledgerCounts(L);
       const box = document.getElementById("ledgerStats");
       if (!c) { box.style.display = "none"; return; }
@@ -1197,16 +1325,20 @@
         document.getElementById("ledgerHint").textContent = "Enter birthday or an accountability start date.";
         return;
       }
-      if (!confirm("Save & calculate will reset the on-time (green) and made-up (orange) rakat counters to 0 and start/refresh tracking from today. Historical debt stays. Continue?")) return;
-
-      // A new calculation starts a fresh live counter while preserving the
-      // user's dates and the derived historical debt.
+      // Saving only updates the dates; historical debt is derived from them.
+      // Counters and the tracking start are kept, so editing a birthday never
+      // erases history. The first save starts live tracking from today.
+      if (!L.trackingStartedAt) L.trackingStartedAt = todayISO();
+      saveLedger(L);
+      syncLedgerUI();
+    };
+    document.getElementById("restartTrackingBtn").onclick = () => {
+      if (!confirm("Restart tracking will reset the on-time (green) and made-up (orange) rakat counters to 0 and restart tracking from today. Days since the last start will count as already prayed. Historical debt stays. Continue?")) return;
+      const L = loadLedger();
       L.onTime = 0;
       L.makeup = 0;
       L.qadaRegistered = 0;
       L.qadaPending = emptyQadaPending();
-      // Refresh tracking start to today on each Save & calculate so the past
-      // since startedPraying is credited once as assumed already prayed.
       L.trackingStartedAt = todayISO();
       saveLedger(L);
       syncLedgerUI();
@@ -1252,7 +1384,7 @@
     // Salah: on-time +2; miss −1; same-day makeup +1; later makeup 0; unpaid after prayer day −9.
     // Brush: on-time +1; missed −1. Idempotent via awarded keys (no re-award on refresh).
     const VELI_KEY = "todo-app-veli-points-v1";
-    const SALAH_SET = new Set(PRAYER_NAMES);
+    const SALAH_SET = new Set([...PRAYER_NAMES, "Witr"]);
     function isBrushId(id) { return id === "brush-am" || id === "brush-pm"; }
     function loadVeli() {
       try {
@@ -1359,39 +1491,17 @@
      */
     function syncVeliPrayerMisses() {
       const today = todayISO();
-      const s = loadPrayerSettings();
       const items = load();
 
-      // Window-end miss for today's open salah todos
-      if (s.times && s.lastDate === today) {
-        const nowMins = new Date().getHours() * 60 + new Date().getMinutes();
-        for (const it of items) {
-          if (it.kind !== "prayer" || it.done || !SALAH_SET.has(it.prayer)) continue;
-          const date = it.date || today;
-          const idx = PRAYER_NAMES.indexOf(it.prayer);
-          let nextEnd = 24 * 60;
-          if (idx >= 0 && idx < PRAYER_NAMES.length - 1) {
-            nextEnd = toMins(s.times[PRAYER_NAMES[idx + 1]]);
-          }
-          // Only mark miss once the window has closed
-          if (date === today && nowMins >= nextEnd) {
-            awardSalahMiss(date, it.prayer);
-            // Soft miss still needs an archive row (upgraded to late/on-time on check-off).
-            archivePrayer({ prayer: it.prayer, text: it.text, time: it.time, date }, "missed");
-          } else if (date < today) {
-            awardSalahMiss(date, it.prayer);
-            archivePrayer({ prayer: it.prayer, text: it.text, time: it.time, date }, "missed");
-          }
-        }
-      } else {
-        // No times / new day: any leftover prayer todos from prior dates are misses
-        for (const it of items) {
-          if (it.kind !== "prayer" || it.done || !SALAH_SET.has(it.prayer)) continue;
-          const date = it.date || today;
-          if (date < today) {
-            awardSalahMiss(date, it.prayer);
-            archivePrayer({ prayer: it.prayer, text: it.text, time: it.time, date }, "missed");
-          }
+      // Miss once the salah's window has closed (Fajr at sunrise, Isha/Witr at next Fajr).
+      const now = new Date();
+      for (const it of items) {
+        if (it.kind !== "prayer" || it.done || !SALAH_SET.has(it.prayer)) continue;
+        const date = it.date || today;
+        if (now >= salahWindowEnd(it.prayer, date)) {
+          awardSalahMiss(date, it.prayer);
+          // Soft miss still needs an archive row (upgraded to late/on-time on check-off).
+          archivePrayer({ prayer: it.prayer, text: it.text, time: it.time, date }, "missed");
         }
       }
 
@@ -1459,7 +1569,7 @@
           rows = upsertArchiveRow(rows, Object.assign({}, existing, {
             status,
             completedAt: existing.completedAt || (status === "on-time" ? parsed.date + "T12:00:00.000Z" : nowISO),
-            rakats: existing.rakats != null ? existing.rakats : (({ Fajr: 2, Dhuhr: 4, Asr: 4, Maghrib: 3, Isha: 4 })[parsed.prayer] || 0)
+            rakats: existing.rakats != null ? existing.rakats : (SALAH_RAKATS[parsed.prayer] || 0)
           }));
           changed = true;
           return;
@@ -1479,7 +1589,7 @@
           date: parsed.date,
           completedAt: status === "on-time" ? parsed.date + "T12:00:00.000Z" : nowISO,
           status,
-          rakats: ({ Fajr: 2, Dhuhr: 4, Asr: 4, Maghrib: 3, Isha: 4 })[parsed.prayer] || 0
+          rakats: SALAH_RAKATS[parsed.prayer] || 0
         });
         changed = true;
       });
@@ -1494,23 +1604,32 @@
       renderVeliPoints();
     }
 
-    /** on-time if completed at or before next athan (or end of day for Isha). */
-    function completionStatus(prayer, athanTime, completedAt) {
-      const s = loadPrayerSettings();
-      const times = (s.times && s.lastDate === todayISO()) ? s.times : null;
+    /** Local Date for "YYYY-MM-DD" + "HH:MM", optionally shifted by whole days. */
+    function dateAt(dateISO, hhmm, addDays) {
+      const [y, m, d] = String(dateISO || todayISO()).split("-").map(Number);
+      const mins = toMins(hhmm);
+      return new Date(y, m - 1, d + (addDays || 0), Math.floor(mins / 60), mins % 60);
+    }
+    /**
+     * When a salah's on-time window closes, for the day it was due.
+     * Fajr → sunrise; Dhuhr → Asr; Asr → Maghrib; Maghrib → Isha;
+     * Isha and Witr → the next day's Fajr. Uses the cached times
+     * (they move only a minute or two a day).
+     */
+    function salahWindowEnd(prayer, date) {
+      const t = loadPrayerSettings().times;
+      if (!t) return dateAt(date, "00:00", 1);
+      if (prayer === "Isha" || prayer === "Witr") return dateAt(date, t.Fajr, 1);
+      if (prayer === "Fajr") return dateAt(date, t.Sunrise || t.Dhuhr, 0);
+      const idx = PRAYER_NAMES.indexOf(prayer);
+      if (idx >= 0 && idx < PRAYER_NAMES.length - 1) return dateAt(date, t[PRAYER_NAMES[idx + 1]], 0);
+      return dateAt(date, "00:00", 1);
+    }
+
+    /** on-time if completed before the window for that day's prayer closed, else late. */
+    function completionStatus(prayer, athanTime, completedAt, date) {
       const done = completedAt ? new Date(completedAt) : new Date();
-      const doneMins = done.getHours() * 60 + done.getMinutes();
-      const athan = toMins(athanTime);
-      let nextEnd = 24 * 60;
-      if (times) {
-        const idx = PRAYER_NAMES.indexOf(prayer);
-        if (idx >= 0 && idx < PRAYER_NAMES.length - 1) {
-          nextEnd = toMins(times[PRAYER_NAMES[idx + 1]]);
-        }
-      }
-      if (doneMins >= athan && doneMins < nextEnd) return "on-time";
-      if (doneMins >= nextEnd || (doneMins < athan && prayer !== "Fajr")) return "late";
-      return "on-time";
+      return done < salahWindowEnd(prayer, date || todayISO()) ? "on-time" : "late";
     }
 
     const ARCHIVE_STATUS_RANK = { missed: 1, late: 2, "on-time": 3 };
@@ -1546,7 +1665,7 @@
         date,
         completedAt: completedAt || new Date().toISOString(),
         status: st,
-        rakats: ({ Fajr: 2, Dhuhr: 4, Asr: 4, Maghrib: 3, Isha: 4 })[item.prayer] || 0
+        rakats: SALAH_RAKATS[item.prayer] || 0
       };
       try {
         const prev = loadArchive();
@@ -1770,6 +1889,7 @@
     window.pruneCompletedAutoTodos = pruneCompletedAutoTodos;
     window.recordDoneId = recordDoneId;
     window.todoFocusKey = todoFocusKey;
+    window.mergeTodoLists = mergeTodoLists;
 
     // migrate
     if (!localStorage.getItem(KEY)) {
@@ -1813,7 +1933,15 @@
       // Background Aladhan refresh; cache already drove injection above
       fetchPrayerTimes({ quiet: !!(s.times && s.lastDate === todayISO()) });
     });
-    setInterval(() => { releaseDuePrayerTodos(); releaseHabits(); checkAthanNotify(); syncVeliPrayerMisses(); }, 15000);
+    setInterval(() => {
+      refreshPrayerTimesIfNewDay(5 * 60 * 1000);
+      releaseDuePrayerTodos(); releaseHabits(); checkAthanNotify(); syncVeliPrayerMisses();
+    }, 15000);
+
+    // Installable Home Screen app (needed for iPhone notifications).
+    if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
+      navigator.serviceWorker.register("sw.js").catch((e) => console.warn("service worker failed", e));
+    }
 
     // ---- Cloud sync: load local UMD after first paint (zero block on refresh) ----
     deferAfterPaint(function loadSupabaseAfterPaint() {
@@ -1858,7 +1986,11 @@
         "todo-app-ledger-v1",
         "todo-app-archive-v1",
         "todo-app-veli-points-v1",
+        "todo-app-deleted-v1",
       ];
+      // Which account this device's data belongs to, so it never lands in someone else's.
+      const OWNER_KEY = "todo-app-owner-v1";
+      const LEDGER_COUNTERS = ["onTime", "makeup", "qadaRegistered"];
 
       const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
         auth: {
@@ -1878,6 +2010,10 @@
       let applyingCloud = false;
       let saveTimer = null;
       let lastCloudUpdatedAt = null;
+      // What the cloud row held when this device last pulled or pushed it: the common
+      // ancestor for three-way merges, so a change made on another device is kept
+      // instead of being overwritten by this device's older copy.
+      let lastSyncedKeys = null;
       let syncReady = false;
       let signedInMutex = Promise.resolve();
       let signedInRunning = false;
@@ -1923,7 +2059,18 @@
         } catch (_) { return false; }
       }
 
-      function applyCloudBlob(data) {
+      /** Three-way merge of the ledger: each device's counter increments are added up. */
+      function mergeLedger3(baseRaw, localRaw, cloudRaw) {
+        const p = (raw) => { try { return JSON.parse(raw || "{}") || {}; } catch (_) { return {}; } };
+        const base = p(baseRaw), local = p(localRaw), cloud = p(cloudRaw);
+        const out = Object.assign({}, cloud, local);
+        for (const f of LEDGER_COUNTERS) {
+          out[f] = Math.max(0, (cloud[f] | 0) + (local[f] | 0) - (base[f] | 0));
+        }
+        return JSON.stringify(out);
+      }
+
+      function applyCloudBlob(data, base) {
         if (!data || !data.keys || typeof data.keys !== "object") return false;
         // Never wipe UI while applying: only write keys present in cloud blob.
         // Skip DOM refresh entirely if local already matches (avoids empty→full flash).
@@ -1962,7 +2109,14 @@
               if (cloudItems.length === 0 && localItems.length > 0) {
                 continue; // keep local
               }
-              localStorage.setItem(k, typeof val === "string" ? val : JSON.stringify(val));
+              // Union, not overwrite: a todo added on another device is kept, and so is one added here.
+              const deleted = Object.assign({}, loadDeleted(), parseDoneMapJson(data.keys[DELETED_KEY]));
+              localStorage.setItem(k, JSON.stringify(mergeTodoLists(localItems, cloudItems, deleted)));
+              continue;
+            }
+            if (k === DELETED_KEY) {
+              const merged = Object.assign({}, parseDoneMapJson(val), loadDeleted());
+              localStorage.setItem(k, JSON.stringify(merged));
               continue;
             }
             // Veli: union awarded keys (local wins conflicts); recompute total.
@@ -2018,6 +2172,19 @@
               rows.sort((a, b) => String(b.completedAt || "").localeCompare(String(a.completedAt || "")));
               localStorage.setItem(k, JSON.stringify(rows));
               continue;
+            }
+            // Single-value keys (settings, ledger): with a known base, keep whichever
+            // side changed; if both changed, keep this device's (ledger counters add up).
+            if (base) {
+              const localVal = localStorage.getItem(k);
+              const baseVal = base[k] ?? null;
+              const cloudVal = val == null ? null : (typeof val === "string" ? val : JSON.stringify(val));
+              if (localVal !== baseVal) {
+                if (cloudVal !== baseVal && k === "todo-app-ledger-v1") {
+                  localStorage.setItem(k, mergeLedger3(baseVal, localVal, cloudVal));
+                }
+                continue;
+              }
             }
             if (val == null) localStorage.removeItem(k);
             else localStorage.setItem(k, typeof val === "string" ? val : JSON.stringify(val));
@@ -2098,6 +2265,28 @@
         }
       }
 
+      /**
+       * Save only if the row is still the version we last saw. Returns false when
+       * another device saved in between, so the caller merges again instead of
+       * overwriting that device's changes.
+       */
+      async function saveCloudIfUnchanged(userId, blob, expectedUpdatedAt) {
+        if (!expectedUpdatedAt) { await upsertCloud(userId, blob); return true; }
+        const payload = { data: blob, updated_at: new Date().toISOString() };
+        const { data, error } = await supabase
+          .from("app_state")
+          .update(payload)
+          .eq("user_id", userId)
+          .eq("app_id", APP_ID)
+          .eq("updated_at", expectedUpdatedAt)
+          .select("updated_at");
+        if (error) throw error;
+        if (!data || !data.length) return false;
+        lastCloudUpdatedAt = data[0].updated_at || payload.updated_at;
+        lastSyncedKeys = Object.assign({}, blob.keys || {});
+        return true;
+      }
+
       async function upsertCloud(userId, blob) {
         const payload = {
           user_id: userId,
@@ -2112,6 +2301,7 @@
           .single();
         if (error) throw error;
         lastCloudUpdatedAt = data?.updated_at || payload.updated_at;
+        lastSyncedKeys = Object.assign({}, blob.keys || {});
         return data;
       }
 
@@ -2126,11 +2316,38 @@
         }, 800);
       }
 
+      /** Merge in whatever another device saved since we last synced. */
+      async function pullAndMerge(userId) {
+        const row = await fetchCloudRow(userId);
+        if (!row || !cloudHasData(row.data)) return false;
+        if (row.updated_at && row.updated_at === lastCloudUpdatedAt) return false;
+        lastCloudUpdatedAt = row.updated_at;
+        const applied = applyCloudBlob(row.data, lastSyncedKeys);
+        lastSyncedKeys = Object.assign({}, row.data.keys || {});
+        return applied;
+      }
+
       async function pushLocalToCloud() {
         if (!currentUser) return;
-        const blob = collectLocalBlob();
-        await upsertCloud(currentUser.id, blob);
+        const userId = currentUser.id;
+        // Pull and merge first, then save only if nobody saved in between;
+        // otherwise merge again. Saving never wipes out another device's changes.
+        for (let attempt = 0; attempt < 4; attempt++) {
+          await pullAndMerge(userId);
+          if (!currentUser || currentUser.id !== userId) return;
+          if (await saveCloudIfUnchanged(userId, collectLocalBlob(), lastCloudUpdatedAt)) {
+            setStatus("Synced to your account", "ok");
+            return;
+          }
+        }
+        // Still racing after several merges: save the merged copy anyway rather than not at all.
+        await upsertCloud(userId, collectLocalBlob());
         setStatus("Synced to your account", "ok");
+      }
+
+      function clearLocalAppData() {
+        for (const k of SYNC_KEYS) _removeItem(k);
+        notified = new Set();
       }
 
       async function onSignedIn(user) {
@@ -2139,6 +2356,14 @@
         currentUser = user;
         syncReady = false;
         updateAuthUI();
+        // Data left on this device by a different account must never be uploaded into this one.
+        const owner = localStorage.getItem(OWNER_KEY);
+        if (owner && owner !== user.id) {
+          clearLocalAppData();
+          lastSyncedKeys = null;
+          refreshAppUI();
+        }
+        _setItem(OWNER_KEY, user.id);
         // Local list already painted; cloud is background-only. Never clear UI while waiting.
         setStatus("Syncing with your account…");
         try {
@@ -2157,7 +2382,8 @@
             }
           } else {
             lastCloudUpdatedAt = row.updated_at;
-            const applied = !!applyCloudBlob(row.data);
+            const applied = !!applyCloudBlob(row.data, lastSyncedKeys);
+            lastSyncedKeys = Object.assign({}, row.data.keys || {});
             // Status only after fetch finishes — never claim "loaded" early or when nothing changed
             if (applied) setStatus("Loaded data from your account", "ok");
             else setStatus("Already up to date with your account", "ok");
@@ -2216,7 +2442,7 @@
           const email = currentUser.email || currentUser.user_metadata?.email || "Signed in";
           emailEl.hidden = false;
           emailEl.textContent = email;
-          hintEl.textContent = "Signed in — changes sync to your account. Sign out anytime; local copy stays on this device.";
+          hintEl.textContent = "Signed in — changes sync to your account. Signing out saves your data to your account and removes it from this device.";
           signInBtn.hidden = true;
           signOutBtn.hidden = false;
         } else {
@@ -2244,10 +2470,26 @@
       });
 
       signOutBtn.addEventListener("click", async () => {
-        setStatus("Signing out…");
+        setStatus("Saving and signing out…");
+        clearTimeout(saveTimer);
+        try {
+          if (currentUser && syncReady) await pushLocalToCloud();
+        } catch (e) {
+          console.warn("Final save failed:", e);
+          if (!confirm("Your latest changes could not be saved to your account. Sign out anyway? They will be removed from this device.")) {
+            setStatus("Still signed in — changes not saved yet: " + (e.message || e), "err");
+            return;
+          }
+        }
         const { error } = await supabase.auth.signOut();
-        if (error) setStatus(error.message || "Sign out failed", "err");
-        else onSignedOut();
+        if (error) { setStatus(error.message || "Sign out failed", "err"); return; }
+        onSignedOut();
+        // Leave nothing behind for the next person who signs in on this device.
+        clearLocalAppData();
+        _removeItem(OWNER_KEY);
+        lastSyncedKeys = null;
+        refreshAppUI();
+        setStatus("Signed out. Your data is in your account and was removed from this device.", "ok");
       });
 
       const _setItem = localStorage.setItem.bind(localStorage);
@@ -2260,6 +2502,14 @@
         _removeItem(key);
         if (SYNC_KEYS.includes(key)) scheduleCloudSave();
       };
+
+      // Pick up changes from other devices when the app comes back to the foreground.
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState !== "visible" || !currentUser || !syncReady) return;
+        pullAndMerge(currentUser.id)
+          .then((applied) => { if (applied) scheduleCloudSave(); })
+          .catch((e) => console.warn("Foreground pull failed:", e));
+      });
 
       // Never await DB inside this callback (supabase-js auth lock deadlock).
       supabase.auth.onAuthStateChange((event, session) => {

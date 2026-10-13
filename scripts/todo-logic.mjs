@@ -512,8 +512,18 @@ export function releaseHabitsPure(items, habitDone, { date, nowMins, times, habi
   return { items: keep, habitDone: nextDone, archived, changed };
 }
 
-/** Ledger Save & calculate reset payload (only applied after user confirms). */
-export function ledgerSaveCalculate(L, today, confirmed) {
+/**
+ * Ledger Save & calculate: keeps counters and the tracking start; only the
+ * first save starts tracking. Mirrors index.html saveLedgerBtn.
+ */
+export function ledgerSaveCalculate(L, today) {
+  const next = { ...L };
+  if (!next.trackingStartedAt) next.trackingStartedAt = today;
+  return { L: next, applied: true };
+}
+
+/** Restart tracking: resets counters (only after the user confirms). Mirrors restartTrackingBtn. */
+export function ledgerRestartTracking(L, today, confirmed) {
   if (!confirmed) return { L, applied: false };
   const next = { ...L };
   next.onTime = 0;
@@ -524,22 +534,58 @@ export function ledgerSaveCalculate(L, today, confirmed) {
   return { L: next, applied: true };
 }
 
+/** Local Date for "YYYY-MM-DD" + "HH:MM", shifted by whole days. */
+export function dateAt(dateISO, hhmm, addDays = 0) {
+  const [y, m, d] = String(dateISO).split("-").map(Number);
+  const mins = toMins(hhmm);
+  return new Date(y, m - 1, d + addDays, Math.floor(mins / 60), mins % 60);
+}
+
 /**
- * on-time if completed in [athan, nextAthan); late if after next athan.
- * Mirrors index.html completionStatus with injectable times/now.
+ * When a salah's on-time window closes. Fajr → sunrise; Dhuhr → Asr;
+ * Asr → Maghrib; Maghrib → Isha; Isha/Witr → next day's Fajr.
+ * Mirrors index.html salahWindowEnd.
  */
-export function completionStatusPure(prayer, athanTime, completedMins, times) {
-  const athan = toMins(athanTime);
-  let nextEnd = 24 * 60;
-  if (times) {
-    const idx = PRAYER_NAMES.indexOf(prayer);
-    if (idx >= 0 && idx < PRAYER_NAMES.length - 1) {
-      nextEnd = toMins(times[PRAYER_NAMES[idx + 1]]);
-    }
+export function salahWindowEnd(prayer, date, times) {
+  if (!times) return dateAt(date, "00:00", 1);
+  if (prayer === "Isha" || prayer === "Witr") return dateAt(date, times.Fajr, 1);
+  if (prayer === "Fajr") return dateAt(date, times.Sunrise || times.Dhuhr, 0);
+  const idx = PRAYER_NAMES.indexOf(prayer);
+  if (idx >= 0 && idx < PRAYER_NAMES.length - 1) return dateAt(date, times[PRAYER_NAMES[idx + 1]], 0);
+  return dateAt(date, "00:00", 1);
+}
+
+/**
+ * on-time if completed (a Date) before that day's window closed, else late.
+ * Mirrors index.html completionStatus.
+ */
+export function completionStatusPure(prayer, date, completedAt, times) {
+  return completedAt < salahWindowEnd(prayer, date, times) ? "on-time" : "late";
+}
+
+/** Union of two todo lists by stable key minus deleted keys; local wins. Mirrors index.html. */
+export function mergeTodoLists(localItems, cloudItems, deleted = {}) {
+  const localKeys = new Set((localItems || []).map(todoFocusKey));
+  const cloudOnly = (cloudItems || []).filter((it) => it && !localKeys.has(todoFocusKey(it)));
+  const out = [];
+  const seen = new Set();
+  for (const it of [...cloudOnly, ...(localItems || [])]) {
+    if (!it) continue;
+    const k = todoFocusKey(it);
+    if (seen.has(k) || deleted[k]) continue;
+    seen.add(k);
+    out.push(it);
   }
-  if (completedMins >= athan && completedMins < nextEnd) return "on-time";
-  if (completedMins >= nextEnd || (completedMins < athan && prayer !== "Fajr")) return "late";
-  return "on-time";
+  return out;
+}
+
+/** Three-way ledger merge: counter increments from both devices add up. Mirrors index.html. */
+export function mergeLedger3(base, local, cloud) {
+  const out = { ...cloud, ...local };
+  for (const f of ["onTime", "makeup", "qadaRegistered"]) {
+    out[f] = Math.max(0, (cloud[f] | 0) + (local[f] | 0) - (base[f] | 0));
+  }
+  return out;
 }
 
 /** Idempotent award: returns { awarded, total, applied }. */
