@@ -1,7 +1,7 @@
 // Service worker: makes the app installable, keeps a fallback copy for
 // offline use, and shows athan notifications (and future web push).
-const CACHE = "todo-app-v1";
-const SHELL = ["./", "index.html", "supabase.min.js", "manifest.webmanifest", "icons/icon-192.png"];
+const CACHE = "todo-app-v2";
+const SHELL = ["./", "index.html", "yol.html", "supabase.min.js", "manifest.webmanifest", "icons/icon-192.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => {}));
