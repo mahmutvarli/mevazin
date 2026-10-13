@@ -1,6 +1,6 @@
 {
-  "name": "Todo + Tabata + Prayers",
-  "short_name": "Todo",
+  "name": "Mevazin",
+  "short_name": "Mevazin",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

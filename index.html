@@ -6,11 +6,11 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#0f172a" />
-  <meta name="apple-mobile-web-app-title" content="Todo" />
+  <meta name="apple-mobile-web-app-title" content="Mevazin" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
-  <title>Todo + Tabata + Prayers</title>
+  <title>Mevazin</title>
   <style>
     :root {
       color-scheme: dark;
@@ -67,8 +67,10 @@
       border-radius: 12px; padding: 10px 6px; font-weight: 600; font-size: 13px; cursor: pointer;
     }
     .tabs button.active { background: var(--accent); color: #0f172a; border-color: var(--accent); }
+    @media (max-width: 379px) { .tabs { display: grid; grid-template-columns: repeat(3, 1fr); } }
     .panel { display: none; }
     .panel.active { display: block; }
+    #yolFrame { display: block; width: 100%; height: calc(100dvh - 150px); min-height: 480px; border: 0; border-radius: 12px; background: transparent; }
     .row { display: flex; gap: 8px; margin-bottom: 16px; }
     input[type="text"], input[type="number"], select {
       flex: 1; border: 1px solid #334155; background: var(--card); color: var(--text);
@@ -190,7 +192,7 @@
 </head>
 <body>
   <div class="app-header">
-    <h1>Todo + Tabata + Prayers</h1>
+    <h1>Mevazin</h1>
     <button type="button" class="veli-badge" id="veliBadge" title="Veli points" aria-haspopup="dialog">Veli points<span class="veli-num" id="veliTotal">0</span></button>
   </div>
   <dialog class="sheet" id="veliSheet" aria-labelledby="veliSheetTitle">
@@ -247,6 +249,7 @@
     <button type="button" id="tab-prayers">Prayers</button>
     <button type="button" id="tab-ledger">Ledger</button>
     <button type="button" id="tab-archive">Archive</button>
+    <button type="button" id="tab-yol">Yol</button>
   </div>
 
   <section id="panel-todo" class="panel active">
@@ -387,6 +390,10 @@
         <button type="button" class="secondary" id="clearArchiveBtn">Clear archive</button>
       </div>
     </div>
+  </section>
+
+  <section id="panel-yol" class="panel">
+    <iframe id="yolFrame" title="Kurb Yolu" data-src="yol.html?embed=1"></iframe>
   </section>
 
   <p class="hint">Without login, data stays on this device. With login, it syncs to your account. Prayer times still come from Aladhan.</p>
@@ -677,7 +684,7 @@
     };
 
     function showTab(name) {
-      ["todo", "tabata", "prayers", "ledger", "archive"].forEach(n => {
+      ["todo", "tabata", "prayers", "ledger", "archive", "yol"].forEach(n => {
         document.getElementById("tab-" + n).classList.toggle("active", n === name);
         document.getElementById("panel-" + n).classList.toggle("active", n === name);
       });
@@ -686,12 +693,17 @@
       if (name === "prayers") syncPrayerUI();
       if (name === "ledger") syncLedgerUI();
       if (name === "archive") renderArchive();
+      if (name === "yol") {
+        const f = document.getElementById("yolFrame");
+        if (!f.src) f.src = f.dataset.src;
+      }
     }
     document.getElementById("tab-todo").onclick = () => showTab("todo");
     document.getElementById("tab-tabata").onclick = () => showTab("tabata");
     document.getElementById("tab-prayers").onclick = () => showTab("prayers");
     document.getElementById("tab-ledger").onclick = () => showTab("ledger");
     document.getElementById("tab-archive").onclick = () => showTab("archive");
+    document.getElementById("tab-yol").onclick = () => showTab("yol");
 
     // Tabata
     const phaseEl = document.getElementById("phase");
@@ -2156,6 +2168,8 @@
       const SUPABASE_URL = "https://jyvkahjkrtlvreeqdotj.supabase.co";
       const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5dmthaGprcnRsdnJlZXFkb3RqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5MDQ1OTMsImV4cCI6MjEwNjQ4MDU5M30.HPcuij-6ggjuCOmbfpH4INA0nfy66wYyoxo_EIdRdqI";
       const APP_ID = "todo-app";
+      // Kurb Yolu (the Yol tab) keeps its notebook here; it runs in its own frame.
+      const KURB_KEY = "kurb-yolu:v1";
       const SYNC_KEYS = [
         "todo-app-v3",
         "todo-app-prayer-settings-v1",
@@ -2167,6 +2181,7 @@
         "todo-app-veli-points-v1",
         "todo-app-deleted-v1",
         RESET_KEY,
+        KURB_KEY,
       ];
       // Which account this device's data belongs to, so it never lands in someone else's.
       const OWNER_KEY = "todo-app-owner-v1";
@@ -2237,6 +2252,28 @@
           }
           return true;
         } catch (_) { return false; }
+      }
+
+      function mergeKurb(localRaw, cloudRaw) {
+        const p = (raw) => { try { const o = typeof raw === "string" ? JSON.parse(raw) : raw; return o && typeof o === "object" ? o : null; } catch (_) { return null; } };
+        const local = p(localRaw), cloud = p(cloudRaw);
+        if (!local) return cloud ? JSON.stringify(cloud) : null;
+        if (!cloud) return null;
+        const newer = (a, b) => ((b && (b.updatedAt || 0)) > ((a && a.updatedAt) || 0) ? b : a) || b || a;
+        const out = Object.assign({}, cloud, local);
+        out.profile = newer(local.profile, cloud.profile);
+        out.progress = newer(local.progress, cloud.progress);
+        const days = Object.assign({}, cloud.days || {});
+        for (const [d, v] of Object.entries(local.days || {})) days[d] = newer(v, days[d]);
+        const lt = local.today, ct = cloud.today;
+        if (lt && ct && lt.date !== ct.date) {
+          const [older, cur] = lt.date > ct.date ? [ct, lt] : [lt, ct];
+          days[older.date] = newer(days[older.date], older);
+          out.today = cur;
+        } else out.today = newer(lt, ct);
+        if (out.today && out.today.date) delete days[out.today.date];
+        out.days = days;
+        return JSON.stringify(out);
       }
 
       /** Three-way merge of the ledger: each device's counter increments are added up. */
@@ -2329,6 +2366,12 @@
               let total = 0;
               Object.keys(awarded).forEach(ak => { total += awarded[ak]|0; });
               localStorage.setItem(k, JSON.stringify({ total, awarded }));
+              continue;
+            }
+            // Kurb Yolu: newer profile and progress win; days are merged, newer edit per day.
+            if (k === KURB_KEY) {
+              const merged = mergeKurb(localStorage.getItem(k), val);
+              if (merged != null) localStorage.setItem(k, merged);
               continue;
             }
             // Archive: union by id (local wins); keep both if no id.
@@ -2695,6 +2738,11 @@
         _removeItem(key);
         if (SYNC_KEYS.includes(key)) scheduleCloudSave();
       };
+
+      // The Yol tab writes from its own frame, which bypasses the setItem hook above.
+      window.addEventListener("storage", (e) => {
+        if (e.key === KURB_KEY && e.storageArea === localStorage) scheduleCloudSave();
+      });
 
       // Pick up changes from other devices when the app comes back to the foreground.
       document.addEventListener("visibilitychange", () => {
