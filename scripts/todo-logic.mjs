@@ -813,3 +813,13 @@ export function checkOffWithArchive(items, doneMap, index, { kind, status, compl
     archived: row,
   };
 }
+
+/** Mirrors index.html prayerDayOver: Isha/Witr scoring day ends one day later (window runs to next Fajr). */
+export function prayerDayOver(prayer, date, today) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || "")) return today > date;
+  const [y, m, d] = date.split("-").map(Number);
+  const next = new Date(y, m - 1, d + 1);
+  const nextISO = next.getFullYear() + "-" + String(next.getMonth() + 1).padStart(2, "0") + "-" + String(next.getDate()).padStart(2, "0");
+  const lastDay = (prayer === "Isha" || prayer === "Witr") ? nextISO : date;
+  return today > lastDay;
+}

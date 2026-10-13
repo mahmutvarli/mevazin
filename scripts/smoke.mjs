@@ -50,6 +50,7 @@ import {
   statusFromVeliAwards,
   checkOffWithArchive,
   FARZ_RAKATS,
+  prayerDayOver,
 } from "./todo-logic.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -195,6 +196,14 @@ console.log("\n=== 2) Salah auto-inject: due unpaid, check stays done, no wipe =
   assert(completionStatusPure("Witr", DATE, at(NEXT, "00:30"), T2) === "on-time", "Witr at 00:30 on time");
   assert(completionStatusPure("Isha", DATE, at(NEXT, TIMES.Fajr), T2) === "late", "Isha after next Fajr late");
   assert(salahWindowEnd("Fajr", DATE, TIMES).getTime() === at(DATE, TIMES.Dhuhr).getTime(), "Fajr falls back to Dhuhr without cached sunrise");
+}
+
+{
+  assert(!prayerDayOver("Isha", "2026-10-02", "2026-10-03"), "Isha missed at next Fajr still has the next day to be made up before −9");
+  assert(prayerDayOver("Isha", "2026-10-02", "2026-10-04"), "Isha unpaid after the following day ends");
+  assert(prayerDayOver("Dhuhr", "2026-10-02", "2026-10-03") && !prayerDayOver("Dhuhr", "2026-10-02", "2026-10-02"), "Dhuhr day ends at midnight");
+  assert(/awardSalahMakeup\(date, prayer, !prayerDayOver\(prayer, date, completedDay\)\)/.test(indexHtml), "index uses prayerDayOver for same-day make-up");
+  assert(/if \(!prayerDayOver\(prayer, date, today\)\) return;/.test(indexHtml), "index uses prayerDayOver before −9");
 }
 
 console.log("\n=== 3) Habits brush: am miss at Dhuhr; pm miss after next Fajr; on-time ===");

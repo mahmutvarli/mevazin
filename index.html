@@ -1446,6 +1446,15 @@
       saveVeli(V);
       return true;
     }
+    /** Scoring day for a salah: Isha and Witr run until the next Fajr, so their day ends a day later. */
+    function prayerDayOver(prayer, date, today) {
+      const d = parseYMD(date);
+      if (!d) return today > date;
+      const lastDay = (prayer === "Isha" || prayer === "Witr")
+        ? toDayKey(new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1))
+        : date;
+      return today > lastDay;
+    }
     function awardSalahUnpaid(date, prayer) {
       // −9 once when miss finalized after prayer day ends without makeup. Do not double with −1.
       return awardVeli("salah-unpaid:" + date + ":" + prayer, -9);
@@ -1472,7 +1481,7 @@
       if (status === "missed") {
         awardSalahMiss(date, prayer);
         // If the miss is already past the prayer day, finalize unpaid immediately.
-        if (todayISO() > date && !veliHas(["salah-ontime:" + date + ":" + prayer, "salah-makeup:" + date + ":" + prayer])) {
+        if (prayerDayOver(prayer, date, todayISO()) && !veliHas(["salah-ontime:" + date + ":" + prayer, "salah-makeup:" + date + ":" + prayer])) {
           awardSalahUnpaid(date, prayer);
         }
         return;
@@ -1480,7 +1489,7 @@
       if (status === "late") {
         // Missed the timely window (−1), then makeup: +1 same calendar day, else 0.
         awardSalahMiss(date, prayer);
-        awardSalahMakeup(date, prayer, completedDay === date);
+        awardSalahMakeup(date, prayer, !prayerDayOver(prayer, date, completedDay));
         return;
       }
     }
@@ -1513,7 +1522,7 @@
         if (parts.length < 3) return;
         const date = parts[1];
         const prayer = parts.slice(2).join(":");
-        if (today <= date) return; // prayer day not over yet
+        if (!prayerDayOver(prayer, date, today)) return; // prayer day not over yet
         if (veliHas(["salah-ontime:" + date + ":" + prayer, "salah-makeup:" + date + ":" + prayer])) return;
         awardSalahUnpaid(date, prayer);
       });
