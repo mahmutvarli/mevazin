@@ -681,7 +681,7 @@ function save(which,quiet){
   if(wiping) return;
   // quiet saves (app-chosen lesson, recall bookkeeping) are not user edits, so they carry no new timestamp
   (Array.isArray(which)?which:[which]).forEach(w=>{dirty.add(w); if(!quiet) stamp(w);});
-  lsWrite();
+  lsWrite(); notifyAct();
   if(mode!=="db"){ syncState="local"; updateSync(); return; }
   clearTimeout(saveTimer);
   saveTimer=setTimeout(flush,500);
@@ -782,6 +782,13 @@ const star = (filled) => `<svg viewBox="0 0 36 36" aria-hidden="true"><rect x="8
 const fmtDate = k => { const [y,m,d]=k.split("-").map(Number); return new Intl.DateTimeFormat(lang()==="tr"?"tr-TR":"en-GB",{day:"numeric",month:"short"}).format(new Date(y,m-1,d)); };
 const actText = l => (S.profile.lighter && l.pl) ? T(l.pl) : T(l.p);
 const practiceText = x => x.id ? (LBY[x.id]?T(LBY[x.id].p):"") : x.text;
+// Inside Mevazin, today's act also shows in the Todos tab once you commit to it.
+function notifyAct(){
+  if(!EMBED || window.parent===window) return;
+  const d=S.today, kept=d.kept?S.profile.practices.find(x=>practiceKey(x)===d.kept):null, l=LBY[d.lesson];
+  const text=kept?practiceText(kept):(l?actText(l):"");
+  try{ window.parent.postMessage({type:"mevazin-yol-act",date:d.date,commit:!!d.commit&&!!text,done:d.result==="did",text},location.origin); }catch(e){}
+}
 const practiceKey = x => x.id ? "l:"+x.id : "t:"+x.text;
 const isKept = id => S.profile.practices.some(x=>x.id===id);
 

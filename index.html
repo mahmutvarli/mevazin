@@ -672,6 +672,34 @@
       fillFocus();
     }
 
+    // Yol tab: the act you commit to today becomes a todo, ticked when you mark it done there.
+    function upsertYolActTodo(m) {
+      if (!m || typeof m.date !== "string" || typeof m.text !== "string") return;
+      const id = "yol-" + m.date;
+      const items = load();
+      const i = items.findIndex(it => it && it.id === id);
+      let changed = false;
+      if (m.commit) {
+        const text = m.text.slice(0, 300);
+        if (i < 0) {
+          if (loadDeleted()["todo:" + id]) return;
+          items.unshift({ text, done: !!m.done, id });
+          changed = true;
+        } else {
+          if (items[i].text !== text) { items[i].text = text; changed = true; }
+          if (m.done && !items[i].done) { items[i].done = true; changed = true; }
+        }
+      } else if (i >= 0 && !items[i].done) {
+        items.splice(i, 1);
+        changed = true;
+      }
+      if (changed) { save(items); render(); }
+    }
+    window.addEventListener("message", (e) => {
+      if (e.origin !== location.origin || !e.data || e.data.type !== "mevazin-yol-act") return;
+      upsertYolActTodo(e.data);
+    });
+
     form.onsubmit = (e) => {
       e.preventDefault();
       const text = input.value.trim();
