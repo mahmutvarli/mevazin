@@ -193,12 +193,12 @@
 <body>
   <div class="app-header">
     <h1>Mevazin</h1>
-    <button type="button" class="veli-badge" id="veliBadge" title="Veli points" aria-haspopup="dialog">Veli points<span class="veli-num" id="veliTotal">0</span></button>
+    <button type="button" class="veli-badge" id="veliBadge" title="Mevazin points" aria-haspopup="dialog">Mevazin<span class="veli-num" id="veliTotal">0</span></button>
   </div>
   <dialog class="sheet" id="veliSheet" aria-labelledby="veliSheetTitle">
     <div class="sheet-step" id="veliStepInfo">
-      <h2 id="veliSheetTitle">Veli points: <span id="veliSheetTotal">0</span></h2>
-      <p class="status" style="text-align:left">Start fresh to begin logging again as if you just signed in. Your Veli points, archive and salah ledger go back to zero; your todos and prayer settings stay.</p>
+      <h2 id="veliSheetTitle">Mevazin points: <span id="veliSheetTotal">0</span></h2>
+      <p class="status" style="text-align:left">Start fresh to begin logging again as if you just signed in. Your Mevazin points, archive and salah ledger go back to zero; your todos and prayer settings stay.</p>
       <div class="sheet-actions">
         <button type="button" class="ghost" id="veliCloseBtn">Close</button>
         <button type="button" class="secondary" id="veliResetBtn">Reset &amp; start fresh</button>
@@ -206,7 +206,7 @@
     </div>
     <div class="sheet-step" id="veliStepConfirm" hidden>
       <h2>Reset everything?</h2>
-      <p class="status" style="text-align:left">This permanently clears your Veli points, prayer archive and salah ledger (birthday, counters and qada) on this device<span id="veliResetCloudNote"> and in your account</span>. It can’t be undone.</p>
+      <p class="status" style="text-align:left">This permanently clears your Mevazin points, prayer archive and salah ledger (birthday, counters and qada) on this device<span id="veliResetCloudNote"> and in your account</span>. It can’t be undone.</p>
       <div class="sheet-actions">
         <button type="button" class="ghost" id="veliCancelResetBtn">Cancel</button>
         <button type="button" class="danger" id="veliConfirmResetBtn">Yes, reset</button>
@@ -342,7 +342,7 @@
         <button type="button" class="secondary" id="restartTrackingBtn" hidden>Restart tracking</button>
       </div>
       <div id="ledgerStats" style="margin-top:16px;display:none">
-        <div class="prayer-row" style="border-left:3px solid var(--prayer);padding-left:8px"><span class="name">Veli points</span><span class="time" id="statVeli" style="color:var(--prayer)">0</span></div>
+        <div class="prayer-row" style="border-left:3px solid var(--prayer);padding-left:8px"><span class="name">Mevazin points</span><span class="time" id="statVeli" style="color:var(--prayer)">0</span></div>
         <div class="prayer-row"><span class="name">Days since accountability</span><span class="time" id="statDays">0</span></div>
         <div class="prayer-row"><span class="name">Total owed since accountability (20×days, fard+witr)</span><span class="time" id="statOwed">0</span></div>
         <div class="prayer-row" style="border-left:3px solid var(--danger);padding-left:8px"><span class="name">Historical debt before started praying (red)</span><span class="time" id="statHistorical" style="color:var(--danger)">0</span></div>
