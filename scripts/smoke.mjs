@@ -54,7 +54,7 @@ import {
 } from "./todo-logic.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const root = path.join(__dirname, "..");
+const root = path.join(__dirname, "..", "app");
 const indexHtml = fs.readFileSync(path.join(root, "index.html"), "utf8");
 
 let passed = 0;
