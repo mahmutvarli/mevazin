@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="tr" data-palette="teal" data-app="piyasa-canli">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Canlı Piyasa</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--plane:#f9f8f8;--card:#fff;--ink:#100c0d;--ink-2:#544a4d;--ink-muted:#8c8285;--ring:rgba(16,12,13,.10);--accent:#0f6f66;--accent-soft:#e0f2ef;
+  --display:"Sora",system-ui,sans-serif;--body:"IBM Plex Sans",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,monospace}
+@media (prefers-color-scheme:dark){:root{--plane:#0f0d0e;--card:#1d1a1b;--ink:#f5f2f3;--ink-2:#c7bfc2;--ink-muted:#8f8689;--ring:rgba(255,255,255,.12);--accent:#45b8a8;--accent-soft:#10302c;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink);font-family:var(--body)}
+.wrap{max-width:1280px;margin:0 auto;padding:16px}
+.appbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--card);border:1px solid var(--ring);border-radius:16px;padding:12px 16px;display:flex;gap:12px;align-items:center}
+.mark{width:32px;height:32px;border-radius:9px;background:var(--accent);color:var(--card);display:grid;place-items:center;font:700 18px var(--display);flex:none}
+h1{font:700 18px var(--display);letter-spacing:-.02em;margin:0}
+.sub{font-size:13px;color:var(--ink-2)}
+.upd{margin-left:auto;font:12px var(--mono);color:var(--ink-muted)}
+.tape{margin-top:12px;border-radius:12px;overflow:hidden;border:1px solid var(--ring);background:var(--card)}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:16px;margin-top:16px}
+.card{background:var(--card);border:1px solid var(--ring);border-radius:16px;padding:12px;min-width:0}
+.card h2{font:600 14px var(--display);margin:0 0 8px}
+.c8{grid-column:span 8}.c4{grid-column:span 4}.c6{grid-column:span 6}.c12{grid-column:span 12}
+.h560{height:560px}.h420{height:420px}
+.note{font-size:13px;color:var(--ink-2);line-height:1.5}
+.note b{color:var(--ink)}
+a{color:var(--accent)}
+@media (max-width:760px){.c8,.c4,.c6{grid-column:span 12}.sub{display:none}.h560{height:420px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="appbar">
+    <div class="mark">P</div>
+    <div><h1>Canlı Piyasa</h1><div class="sub">Kur, altın, emtia, kripto ve BIST, anlık grafikler</div></div>
+    <div class="upd" id="clock"></div>
+  </header>
+
+  <div class="tape"><div class="tradingview-widget-container" id="w-tape"></div></div>
+
+  <div class="grid">
+    <section class="card c8"><h2>Grafik</h2><div class="h560" id="w-chart"></div></section>
+    <section class="card c4"><h2>Piyasa özeti</h2><div class="h560" id="w-overview"></div></section>
+    <section class="card c6"><h2>Çapraz kurlar</h2><div class="h420" id="w-cross"></div></section>
+    <section class="card c6"><h2>BIST 100</h2><div class="h420" id="w-bist"></div></section>
+    <section class="card c12 note">
+      <b>Gecikme:</b> Her widget sembolün yanında gecikmeyi kendisi gösterir. Kur ve kripto genelde anlık gelir; BIST ücretsiz widget'ta gecikmeli olabilir. Gecikme etiketi görünüyorsa o veri canlı değildir.
+      <br><b>Kaynak:</b> Grafikler ve fiyatlar <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView</a> tarafından sağlanır. Yatırım tavsiyesi değildir.
+      <br><b>Tarihsel analiz</b> (TCMB, ECB, EIA günlük seriler) için ayrı pano: <a href="https://claude.ai/artifact/3KXNnrFm87PQPjMjEsTVi9" target="_blank" rel="noopener">Piyasa Verileri</a>.
+    </section>
+  </div>
+</div>
+<script>
+(function(){
+  const dark = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  function tv(id, name, cfg){
+    const host = document.getElementById(id);
+    const inner = document.createElement("div"); inner.className = "tradingview-widget-container__widget"; inner.style.height = "100%";
+    host.appendChild(inner);
+    const s = document.createElement("script");
+    s.src = "https://s3.tradingview.com/external-embedding/embed-widget-" + name + ".js"; s.async = true;
+    s.textContent = JSON.stringify(Object.assign({colorTheme: dark, locale: "tr", isTransparent: true}, cfg));
+    host.appendChild(s);
+  }
+  tv("w-tape","ticker-tape",{displayMode:"adaptive",showSymbolLogo:true,symbols:[
+    {proName:"FX_IDC:USDTRY",title:"USD/TRY"},{proName:"FX_IDC:EURTRY",title:"EUR/TRY"},
+    {proName:"FX:EURUSD",title:"EUR/USD"},{proName:"OANDA:XAUUSD",title:"Altın ons"},
+    {proName:"TVC:UKOIL",title:"Brent"},{proName:"BIST:XU100",title:"BIST 100"},
+    {proName:"BINANCE:BTCUSDT",title:"BTC"},{proName:"BINANCE:ETHUSDT",title:"ETH"}]});
+  tv("w-chart","advanced-chart",{autosize:true,symbol:"FX_IDC:USDTRY",interval:"5",timezone:"Europe/Istanbul",style:"1",
+    allow_symbol_change:true,withdateranges:true,details:true,
+    watchlist:["FX_IDC:USDTRY","FX_IDC:EURTRY","OANDA:XAUUSD","TVC:UKOIL","BIST:XU100","BINANCE:BTCUSDT"]});
+  tv("w-overview","market-overview",{width:"100%",height:"100%",dateRange:"1D",showChart:true,tabs:[
+    {title:"Kurlar",symbols:[{s:"FX_IDC:USDTRY",d:"USD/TRY"},{s:"FX_IDC:EURTRY",d:"EUR/TRY"},{s:"FX_IDC:GBPTRY",d:"GBP/TRY"},{s:"FX:EURUSD",d:"EUR/USD"}]},
+    {title:"Emtia",symbols:[{s:"OANDA:XAUUSD",d:"Altın ons"},{s:"OANDA:XAGUSD",d:"Gümüş ons"},{s:"TVC:UKOIL",d:"Brent"},{s:"TVC:USOIL",d:"WTI"}]},
+    {title:"Kripto",symbols:[{s:"BINANCE:BTCUSDT",d:"BTC"},{s:"BINANCE:ETHUSDT",d:"ETH"}]}]});
+  tv("w-cross","forex-cross-rates",{width:"100%",height:"100%",currencies:["TRY","USD","EUR","GBP","JPY","CHF"]});
+  tv("w-bist","symbol-overview",{width:"100%",height:"100%",symbols:[["BIST 100","BIST:XU100|1D"],["BIST 30","BIST:XU030|1D"]],
+    chartType:"area",scalePosition:"right",dateRanges:["1d|1","1m|30","12m|1D","60m|1W"]});
+  const c = document.getElementById("clock");
+  const tick = () => c.textContent = new Date().toLocaleString("tr-TR",{timeZone:"Europe/Istanbul",day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  tick(); setInterval(tick,1000);
+})();
+</script>
+</body>
+</html>
